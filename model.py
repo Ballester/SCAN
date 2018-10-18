@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Stacked Cross Attention Network implementation based on 
+# Stacked Cross Attention Network implementation based on
 # https://arxiv.org/abs/1803.08024.
 # "Stacked Cross Attention for Image-Text Matching"
 # Kuang-Huei Lee, Xi Chen, Gang Hua, Houdong Hu, Xiaodong He
@@ -37,7 +37,7 @@ def l2norm(X, dim, eps=1e-8):
     return X
 
 
-def EncoderImage(data_name, img_dim, embed_size, precomp_enc_type='basic', 
+def EncoderImage(data_name, img_dim, embed_size, precomp_enc_type='basic',
                  no_imgnorm=False):
     """A wrapper to image encoders. Chooses between an different encoders
     that uses precomputed image features.
@@ -284,7 +284,7 @@ def xattn_score_t2i(images, captions, cap_lens, opt):
 
     # (n_image, n_caption)
     similarities = torch.cat(similarities, 1)
-    
+
     return similarities
 
 
@@ -380,15 +380,16 @@ class SCAN(object):
     """
     Stacked Cross Attention Network (SCAN) model
     """
-    def __init__(self, opt):
+    def __init__(self, opt, ema):
         # Build Models
+        self.opt = opt
         self.grad_clip = opt.grad_clip
         self.img_enc = EncoderImage(opt.data_name, opt.img_dim, opt.embed_size,
                                     precomp_enc_type=opt.precomp_enc_type,
                                     no_imgnorm=opt.no_imgnorm)
         self.txt_enc = EncoderText(opt.vocab_size, opt.word_dim,
-                                   opt.embed_size, opt.num_layers, 
-                                   use_bi_gru=opt.bi_gru,  
+                                   opt.embed_size, opt.num_layers,
+                                   use_bi_gru=opt.bi_gru,
                                    no_txtnorm=opt.no_txtnorm)
         if torch.cuda.is_available():
             self.img_enc.cuda()
@@ -404,7 +405,11 @@ class SCAN(object):
 
         self.params = params
 
-        self.optimizer = torch.optim.Adam(params, lr=opt.learning_rate)
+        if ema:
+            for param in filter(lambda p: p.requires_grad, self.params):
+                param.detach_()
+        else:
+            self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.params), lr=opt.learning_rate)
 
         self.Eiters = 0
 
@@ -449,15 +454,15 @@ class SCAN(object):
         """Compute the loss given pairs of image and caption embeddings
         """
         loss = self.criterion(img_emb, cap_emb, cap_len)
-        self.logger.update('Le', loss.data[0], img_emb.size(0))
+        # self.logger.update('Le', loss.data[0], img_emb.size(0))
         return loss
 
     def train_emb(self, images, captions, lengths, ids=None, *args):
         """One training step given images and captions.
         """
         self.Eiters += 1
-        self.logger.update('Eit', self.Eiters)
-        self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
+        # self.logger.update('Eit', self.Eiters)
+        # self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
 
         # compute the embeddings
         img_emb, cap_emb, cap_lens = self.forward_emb(images, captions, lengths)
@@ -471,3 +476,10 @@ class SCAN(object):
         if self.grad_clip > 0:
             clip_grad_norm(self.params, self.grad_clip)
         self.optimizer.step()
+
+    def run_emb(self, images, captions, lengths, ids=None, *args):
+        """Running embeddings for mean-teacher
+        """
+        img_emb, cap_emb = self.forward_emb(images, captions, lengths)
+
+        return img_emb, cap_emb
