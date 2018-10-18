@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# Stacked Cross Attention Network implementation based on 
+# Stacked Cross Attention Network implementation based on
 # https://arxiv.org/abs/1803.08024.
 # "Stacked Cross Attention for Image-Text Matching"
 # Kuang-Huei Lee, Xi Chen, Gang Hua, Houdong Hu, Xiaodong He
@@ -124,3 +124,76 @@ def get_test_loader(split_name, data_name, vocab, batch_size,
     test_loader = get_precomp_loader(dpath, split_name, vocab, opt,
                                      batch_size, False, workers)
     return test_loader
+
+### EDIT BALLESTER ###
+def get_loader(
+        data_name, tokenizer, crop_size,
+        batch_size, workers, opt,
+        split='train', adapt_set=False
+    ):
+
+    dpath = os.path.join(opt.data_path, data_name)
+
+    if opt.data_name.endswith('_precomp'):
+
+        if split in ['train', 'val', 'test']:
+            loader = get_precomp_loader(
+                data_path=dpath,
+                data_split=split,
+                tokenizer=tokenizer,
+                opt=opt,
+                batch_size=batch_size,
+                shuffle=(split == 'train'),
+                num_workers=workers,
+                collate_fn=collate_fn,
+                adapt_set=adapt_set,
+            )
+        elif split == 'adapt':
+            adapt_dataset = UnlabeledPrecompDataset(
+                data_path=dpath,
+                sigma=opt.noise,
+            )
+            loader = torch.utils.data.DataLoader(
+                dataset=adapt_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                pin_memory=True,
+            )
+
+    else:
+        # Build Dataset Loader
+        roots, ids = get_paths(dpath, data_name, opt.use_restval)
+
+        if split in ['train', 'val', 'test']:
+            transform = get_transform(data_name, split, opt)
+            loader = get_loader_single(
+                data_name=opt.data_name,
+                split=split,
+                root=roots[split]['img'],
+                json=roots[split]['cap'],
+                tokenizer=tokenizer,
+                transform=transform,
+                ids=ids[split],
+                batch_size=batch_size,
+                shuffle=(split == 'train'),
+                num_workers=workers,
+                collate_fn=collate_fn,
+                adapt_set=adapt_set,
+            )
+
+        elif split == 'adapt':
+            adapt_dataset = UnlabeledCocoDataset(
+                root=roots['unlabeled']['img'],
+                transform=transform,
+                adapt_set=True,
+            )
+
+            loader = torch.utils.data.DataLoader(
+                dataset=adapt_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                pin_memory=True,
+                num_workers=4,
+            )
+
+    return loader
