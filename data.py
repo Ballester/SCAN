@@ -24,10 +24,17 @@ class PrecompDataset(data.Dataset):
     Possible options: f30k_precomp, coco_precomp
     """
 
-    def __init__(self, data_path, data_split, vocab):
+    def __init__(
+        self, data_path, data_split, 
+        vocab, adapt_set=False, sigma=0.0):
+        self.data_path = data_path
+        self.split = data_split
         self.vocab = vocab
         loc = data_path + '/'
+        self.adapt_set = adapt_set
+        self.sigma = sigma
 
+        data_split = data_split.replace('val', 'dev')
         # Captions
         self.captions = []
         with open(loc+'%s_caps.txt' % data_split, 'rb') as f:
@@ -61,10 +68,20 @@ class PrecompDataset(data.Dataset):
         caption.extend([vocab(token) for token in tokens])
         caption.append(vocab('<end>'))
         target = torch.Tensor(caption)
+        
+        if self.adapt_set:
+            image_adapt = add_noise(image, self.sigma)
+            image = add_noise(image, self.sigma)
+            image = (image, image_adapt)
+
         return image, target, index, img_id
 
     def __len__(self):
         return self.length
+
+
+def add_noise(x, sigma=0.):
+    return x+x.clone().normal_(0., sigma)
 
 
 def collate_fn(data):
@@ -83,6 +100,11 @@ def collate_fn(data):
     data.sort(key=lambda x: len(x[1]), reverse=True)
     images, captions, ids, img_ids = zip(*data)
 
+    images_ema = None    
+    if len(images[0]) == 2:
+        images, images_ema = zip(*images)
+        images_ema = torch.stack(images_ema, 0)
+
     # Merge images (convert tuple of 3D tensor to 4D tensor)
     images = torch.stack(images, 0)
 
@@ -92,44 +114,58 @@ def collate_fn(data):
     for i, cap in enumerate(captions):
         end = lengths[i]
         targets[i, :end] = cap[:end]
+    
+    if images_ema is not None:
+        return images, images_ema, targets, lengths, ids
 
     return images, targets, lengths, ids
 
 
-def get_precomp_loader(data_path, data_split, vocab, opt, batch_size=100,
-                       shuffle=True, num_workers=2):
+def get_precomp_loader(
+        data_path, data_split, vocab, 
+        opt, batch_size=100, shuffle=True, 
+        num_workers=2, adapt_set=False, noise=0.0
+    ):
     """Returns torch.utils.data.DataLoader for custom coco dataset."""
-    dset = PrecompDataset(data_path, data_split, vocab)
+    dset = PrecompDataset(
+        data_path, data_split, vocab, adapt_set, sigma=noise)
 
-    data_loader = torch.utils.data.DataLoader(dataset=dset,
-                                              batch_size=batch_size,
-                                              shuffle=shuffle,
-                                              pin_memory=True,
-                                              collate_fn=collate_fn)
+    data_loader = torch.utils.data.DataLoader(
+        dataset=dset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        pin_memory=True,
+        collate_fn=collate_fn,
+    )
     return data_loader
 
 
-def get_loaders(data_name, vocab, batch_size, workers, opt):
+def _get_loaders(data_name, vocab, batch_size, workers, opt):
     dpath = os.path.join(opt.data_path, data_name)
-    train_loader = get_precomp_loader(dpath, 'train', vocab, opt,
-                                      batch_size, True, workers)
-    val_loader = get_precomp_loader(dpath, 'dev', vocab, opt,
-                                    batch_size, False, workers)
+    train_loader = get_precomp_loader(
+        dpath, 'train', vocab, opt,
+        batch_size, True, workers
+    )
+    val_loader = get_precomp_loader(
+        dpath, 'dev', vocab, opt,
+        batch_size, False, workers
+    )
     return train_loader, val_loader
 
 
 def get_test_loader(split_name, data_name, vocab, batch_size,
                     workers, opt):
     dpath = os.path.join(opt.data_path, data_name)
-    test_loader = get_precomp_loader(dpath, split_name, vocab, opt,
-                                     batch_size, False, workers)
+    test_loader = get_precomp_loader(
+        dpath, split_name, vocab, opt,
+        batch_size, False, workers
+    )
     return test_loader
 
 ### EDIT BALLESTER ###
 def get_loader(
-        data_name, tokenizer, crop_size,
-        batch_size, workers, opt,
-        split='train', adapt_set=False
+        data_name, batch_size, workers, opt,
+        split='train', adapt_set=False, vocab=None
     ):
 
     dpath = os.path.join(opt.data_path, data_name)
@@ -139,14 +175,14 @@ def get_loader(
         if split in ['train', 'val', 'test']:
             loader = get_precomp_loader(
                 data_path=dpath,
-                data_split=split,
-                tokenizer=tokenizer,
+                data_split=split,                
+                vocab=vocab,
                 opt=opt,
                 batch_size=batch_size,
                 shuffle=(split == 'train'),
-                num_workers=workers,
-                collate_fn=collate_fn,
+                num_workers=workers,                
                 adapt_set=adapt_set,
+                noise=opt.noise,
             )
         elif split == 'adapt':
             adapt_dataset = UnlabeledPrecompDataset(
@@ -160,40 +196,5 @@ def get_loader(
                 pin_memory=True,
             )
 
-    else:
-        # Build Dataset Loader
-        roots, ids = get_paths(dpath, data_name, opt.use_restval)
-
-        if split in ['train', 'val', 'test']:
-            transform = get_transform(data_name, split, opt)
-            loader = get_loader_single(
-                data_name=opt.data_name,
-                split=split,
-                root=roots[split]['img'],
-                json=roots[split]['cap'],
-                tokenizer=tokenizer,
-                transform=transform,
-                ids=ids[split],
-                batch_size=batch_size,
-                shuffle=(split == 'train'),
-                num_workers=workers,
-                collate_fn=collate_fn,
-                adapt_set=adapt_set,
-            )
-
-        elif split == 'adapt':
-            adapt_dataset = UnlabeledCocoDataset(
-                root=roots['unlabeled']['img'],
-                transform=transform,
-                adapt_set=True,
-            )
-
-            loader = torch.utils.data.DataLoader(
-                dataset=adapt_dataset,
-                batch_size=batch_size,
-                shuffle=True,
-                pin_memory=True,
-                num_workers=4,
-            )
-
+    
     return loader

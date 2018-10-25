@@ -77,8 +77,8 @@ class LogCollector(object):
         """Log using tensorboard
         """
         for k, v in self.meters.iteritems():
-            tb_logger.log_value(prefix + k, v.val, step=step)
-
+            tb_logger.add_scalar(prefix + k, v.val, step)
+            
 
 def encode_data(model, data_loader, log_step=10, logging=print):
     """Encode all images and captions loadable by `data_loader`

@@ -384,22 +384,30 @@ class SCAN(object):
         # Build Models
         self.opt = opt
         self.grad_clip = opt.grad_clip
-        self.img_enc = EncoderImage(opt.data_name, opt.img_dim, opt.embed_size,
-                                    precomp_enc_type=opt.precomp_enc_type,
-                                    no_imgnorm=opt.no_imgnorm)
-        self.txt_enc = EncoderText(opt.vocab_size, opt.word_dim,
-                                   opt.embed_size, opt.num_layers,
-                                   use_bi_gru=opt.bi_gru,
-                                   no_txtnorm=opt.no_txtnorm)
+        self.img_enc = EncoderImage(
+            opt.data_name, opt.img_dim, opt.embed_size,
+            precomp_enc_type=opt.precomp_enc_type,
+            no_imgnorm=opt.no_imgnorm
+        )
+
+        self.txt_enc = EncoderText(
+            opt.vocab_size, opt.word_dim,
+            opt.embed_size, opt.num_layers,
+            use_bi_gru=opt.bi_gru,
+            no_txtnorm=opt.no_txtnorm
+        )
+
         if torch.cuda.is_available():
             self.img_enc.cuda()
             self.txt_enc.cuda()
             cudnn.benchmark = True
 
         # Loss and Optimizer
-        self.criterion = ContrastiveLoss(opt=opt,
-                                         margin=opt.margin,
-                                         max_violation=opt.max_violation)
+        self.criterion = ContrastiveLoss(
+            opt=opt,
+            margin=opt.margin,
+            max_violation=opt.max_violation
+        )
         params = list(self.txt_enc.parameters())
         params += list(self.img_enc.fc.parameters())
 
@@ -409,9 +417,18 @@ class SCAN(object):
             for param in filter(lambda p: p.requires_grad, self.params):
                 param.detach_()
         else:
-            self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.params), lr=opt.learning_rate)
+            self.optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, self.params), 
+                lr=opt.learning_rate
+            )
+
+        self.params = params
 
         self.Eiters = 0
+
+
+    def get_params(self):
+        return self.params
 
     def state_dict(self):
         state_dict = [self.img_enc.state_dict(), self.txt_enc.state_dict()]
@@ -480,6 +497,6 @@ class SCAN(object):
     def run_emb(self, images, captions, lengths, ids=None, *args):
         """Running embeddings for mean-teacher
         """
-        img_emb, cap_emb = self.forward_emb(images, captions, lengths)
+        img_emb, cap_emb, cap_lens = self.forward_emb(images, captions, lengths)
 
-        return img_emb, cap_emb
+        return img_emb, cap_emb, cap_lens

@@ -14,6 +14,7 @@ import shutil
 
 import torch
 import numpy
+import numpy as np
 
 import data
 from vocab import Vocabulary, deserialize_vocab
@@ -36,6 +37,21 @@ def main():
                         help='path to datasets')
     parser.add_argument('--data_name', default='precomp',
                         help='{coco,f30k}_precomp')
+    
+    parser.add_argument('--val_data', default='precomp',
+                        help='{coco,f30k}_precomp')
+    parser.add_argument('--val_split', default='val',
+                        help='split to validate results durin training')
+    parser.add_argument('--val_batch_size', type=int, default=128,
+                        help='batch size for validation')
+
+    parser.add_argument('--adapt_data', default='precomp',
+                        help='{coco,f30k}_precomp')
+    parser.add_argument('--adapt_split', default='train',
+                        help='split to perform adaptation to')
+    parser.add_argument('--adapt_batch_size', type=int, default=128,
+                        help='batch size for adaptation')
+    
     parser.add_argument('--vocab_path', default='./vocab/',
                         help='Path to saved vocabulary json files.')
     parser.add_argument('--margin', default=0.2, type=float,
@@ -126,8 +142,8 @@ def main():
 
     opt = parser.parse_args()
 
-    if opt.test_measure is None:
-        opt.test_measure = opt.measure
+    # if opt.test_measure is None:
+    #     opt.test_measure = opt.measure
 
     print('\n\n')
     print(opt)
@@ -145,7 +161,6 @@ def main():
     print('Outpath: ', opt.logger_name)
 
 
-
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
     # Load Vocabulary Wrapper
@@ -160,35 +175,39 @@ def main():
         split='train',
         data_name=opt.data_name,
         batch_size=opt.batch_size,
-        tokenizer=tokenizer,
-        crop_size=opt.crop_size,
+        vocab=vocab,
+        # tokenizer=tokenizer,        
         workers=opt.workers,
         opt=opt,
         adapt_set=False,
     )
+    print('[OK] Train loader')
 
     val_loader = data.get_loader(
         data_name=opt.val_data,
         split=opt.val_split,
         batch_size=opt.val_batch_size,
-        tokenizer=tokenizer,
-        crop_size=opt.crop_size,
+        vocab=vocab,
+        # tokenizer=tokenizer,                
         workers=opt.workers,
         opt=opt,
         adapt_set=False,
     )
+    
+    print('[OK] Val loader')
 
-    if opt.add_data:
-        adapt_loader = data.get_loader(
+    adapt_loader = data.get_loader(
             split=opt.adapt_split,
             data_name=opt.adapt_data,
             batch_size=opt.adapt_batch_size,
-            tokenizer=tokenizer,
-            crop_size=opt.crop_size,
+            vocab=vocab,
+            # tokenizer=tokenizer,            
             workers=opt.workers,
             opt=opt,
-            adapt_set=True,
+            adapt_set=True,            
         )
+    
+    print('[OK] Adapt loader')
 
     print('Train loader/dataset')
     print(train_loader.dataset.data_path, train_loader.dataset.split)
@@ -258,18 +277,20 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
     adapt_loss = torch.nn.MSELoss()
 
     if opt.ramp_lr:
-        adjust_learning_rate_mean_teacher(model.optimizer, epoch, opt.num_epochs,
-                                          opt.initial_lr_rampup, opt.initial_lr)
+        adjust_learning_rate_mean_teacher(
+            model.optimizer, epoch, opt.num_epochs,
+            opt.initial_lr_rampup, opt.initial_lr)
     else:
         adjust_learning_rate(opt, model.optimizer, epoch)
 
-    consistency_weight = get_current_consistency_weight(opt.consistency_weight,
-                                                        epoch, opt.consistency_rampup)
+    consistency_weight = get_current_consistency_weight(
+        opt.consistency_weight, epoch, opt.consistency_rampup)
 
 
     for i, train_data in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
+        model.Eiters += 1
 
         # switch to train mode
         model.train_start()
@@ -285,7 +306,7 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
             adapt_data = next(adapt_iter)
 
         # Get embeddings
-        img_emb, cap_emb = model.run_emb(*train_data)
+        img_emb, cap_emb, cap_lens = model.run_emb(*train_data)
 
         # Data for Domain Adaptation or SS Learning
         # Adapt loader returns different features for the same images
@@ -303,13 +324,14 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
 
         # measure accuracy and record loss
         model.optimizer.zero_grad()
-        loss = model.forward_loss(img_emb, cap_emb)
+        loss = model.forward_loss(img_emb, cap_emb, cap_lens)
         total_loss = loss + consistency_loss
 
         # compute gradient and do SGD step
         total_loss.backward()
         if model.grad_clip > 0:
-            clip_grad_norm(model.params, model.grad_clip)
+            torch.nn.utils.clip_grad_norm_(
+                parameters=model.params, max_norm=model.grad_clip)
 
         model.optimizer.step()
 
@@ -334,7 +356,7 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
 
         # measure elapsed time
         batch_time.update(time.time() - end)
-        end = time.time()
+        end = time.time()        
 
         tb_writer.add_scalar('Iter', model.Eiters, model.Eiters)
         tb_writer.add_scalar('Lr', model.optimizer.param_groups[0]['lr'], model.Eiters)
@@ -347,7 +369,7 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
 
         # Print log info
         if model.Eiters % opt.log_step == 0:
-            logging.info(
+            print(
                 'Epoch: [{0}][{1}/{2}]\t'
                 '{e_log}\t'
                 'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
@@ -362,11 +384,11 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
         tb_writer.add_scalar('batch_time', batch_time.val, model.Eiters)
         tb_writer.add_scalar('data_time', data_time.val, model.Eiters)
 
-        model.logger.tb_log(tb_writer,  model.Eiters)
+        model.logger.tb_log(tb_writer, prefix='train', step=model.Eiters)
 
         # validate at every val_step
-        if model.Eiters % opt.val_step == 0:
-            validate(opt, val_loader, model, writer)
+        if model.Eiters % opt.val_step == 0 and model.Eiters > 0:
+            validate(opt, val_loader, model, tb_writer)
 
             if opt.log_images:
                 plot_img = vutils.make_grid(train_data[0],
@@ -398,12 +420,12 @@ def validate(opt, val_loader, model, tb_writer):
 
     # caption retrieval
     (r1, r5, r10, medr, meanr) = i2t(img_embs, cap_embs, cap_lens, sims)
-    logging.info("Image to text: %.1f, %.1f, %.1f, %.1f, %.1f" %
+    print("Image to text: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1, r5, r10, medr, meanr))
     # image retrieval
     (r1i, r5i, r10i, medri, meanr) = t2i(
         img_embs, cap_embs, cap_lens, sims)
-    logging.info("Text to image: %.1f, %.1f, %.1f, %.1f, %.1f" %
+    print("Text to image: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1i, r5i, r10i, medri, meanr))
     # sum of recalls to be used for early stopping
     currscore = r1 + r5 + r10 + r1i + r5i + r10i
