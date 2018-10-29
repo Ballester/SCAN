@@ -134,7 +134,7 @@ def main():
                         help='Epoch for lr rampup')
     parser.add_argument('--consistency_weight', type=float, default=20.,
                         help='consistency weight (default: 20.).')
-    parser.add_argument('--consistency_alpha', type=float, default=0.99,
+    parser.add_argument('--consistency_alpha', type=float, default=0.9,
                         help='Consistency alpha before ema_late_epoch')
     parser.add_argument('--consistency_alpha_late', type=float, default=0.999,
                         help='Consistency alpha after ema_late_epoch')

@@ -66,8 +66,8 @@ python train.py \
 --num_epochs=30 \
 --lr_update=10 \
 --learning_rate=.0005 \
---model_name runs/coco_f30k_da_it_avg_c1/ \
---logger_name runs/coco_f30k_da_it_avg_c1/ \
+--model_name runs/coco_f30k_da_t2i_avg_c1/ \
+--logger_name runs/coco_f30k_da_t2i_avg_c1/ \
 --consistency_weight 1. \
 --ema_late_epoch 10 \
 --consistency_rampup 10 \
@@ -91,8 +91,8 @@ python train.py \
 --num_epochs=30 \
 --lr_update=10 \
 --learning_rate=.0005 \
---model_name runs/coco_f30k_da_ti_avg_c1/ \
---logger_name runs/coco_f30k_da_ti_avg_c1/ \
+--model_name runs/coco_f30k_da_it_avg_c1/ \
+--logger_name runs/coco_f30k_da_it_avg_c1/ \
 --consistency_weight 1 \
 --ema_late_epoch 10 \
 --consistency_rampup 10 \
