@@ -118,6 +118,9 @@ def main():
                         help='Wheter to use log images in tensorboard.')
     parser.add_argument('--noise', type=float, default=0.,
                         help='Ammont of noise for augmenting embeddings.')
+    parser.add_argument('--dropout_noise', type=float, default=0.,
+                        help='Ammont of noise for augmenting word embeddings.')
+
     parser.add_argument('--kwargs', type=str, nargs='+', default=None,
                         help='Additional args for the model. Usage: argument:type:value ')
 
@@ -306,21 +309,30 @@ def train(opt, train_loader, adapt_loader, model, model_ema, epoch, val_loader, 
             adapt_data = next(adapt_iter)
 
         # Get embeddings
-        img_emb, cap_emb, cap_lens = model.run_emb(*train_data)
+        img_emb, cap_emb, cap_lens = model.run_emb(*train_data)        
 
-        # Data for Domain Adaptation or SS Learning
+        # Data for Domain Adaptation or SS Learning 
         # Adapt loader returns different features for the same images
-        adapt_imgs_ema, adapt_imgs, _, _, _ = adapt_data
-        adapt_imgs = adapt_imgs.float().cuda()
+        adapt_imgs_ema, adapt_imgs, adapt_caption, adapt_lens, _ = adapt_data
+            
+        adapt_imgs = adapt_imgs.float().cuda()                
         adapt_imgs_ema = adapt_imgs_ema.float().cuda()
-
+        
+        consistency_loss_cap = 0.
+        if opt.adapt_split != 'unlabeled':            
+            with torch.no_grad():
+                adapt_caption = adapt_caption.cuda()
+                ema_adapt_cap_emb = model_ema.txt_enc(adapt_caption, adapt_lens, dropout=opt.dropout_noise)
+                adapt_cap_mb = model.txt_enc(adapt_caption, adapt_lens, dropout=opt.dropout_noise)
+                consistency_loss_cap = adapt_loss(ema_adapt_cap_emb, adapt_cap_mb)
+                        
         with torch.no_grad():
-            ema_adapt_imgs_emb = model_ema.img_enc(adapt_imgs_ema)
+            ema_adapt_imgs_emb = model_ema.img_enc(adapt_imgs_ema)            
 
         adapt_imgs_emb = model.img_enc(adapt_imgs)
 
         consistency_loss_img = adapt_loss(ema_adapt_imgs_emb, adapt_imgs_emb)
-        consistency_loss = consistency_loss_img * consistency_weight
+        consistency_loss = (consistency_loss_img/2. + consistency_loss_cap/2.) * consistency_weight
 
         # measure accuracy and record loss
         model.optimizer.zero_grad()
