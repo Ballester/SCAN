@@ -151,11 +151,12 @@ class EncoderText(nn.Module):
     def init_weights(self):
         self.embed.weight.data.uniform_(-0.1, 0.1)
 
-    def forward(self, x, lengths):
+    def forward(self, x, lengths, dropout=0.0):
         """Handles variable size captions
         """
         # Embed word ids to vectors
         x = self.embed(x)
+        x = nn.Dropout(dropout)(x)
         packed = pack_padded_sequence(x, lengths, batch_first=True)
 
         # Forward propagate RNN

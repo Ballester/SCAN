@@ -138,7 +138,7 @@ def encode_data(model, data_loader, log_step=10, logging=print):
     return img_embs, cap_embs, cap_lens
 
 
-def evalrank(model_path, data_path=None, split='dev', fold5=False):
+def evalrank(model_path, data_name=None, data_path=None, split='dev', fold5=False):
     """
     Evaluate a trained model on either dev or test. If `fold5=True`, 5 fold
     cross-validation is done (only for MSCOCO). Otherwise, the full data is
@@ -150,13 +150,16 @@ def evalrank(model_path, data_path=None, split='dev', fold5=False):
     print(opt)
     if data_path is not None:
         opt.data_path = data_path
+    
+    if data_name is not None:
+        opt.data_name = data_name
 
     # load vocabulary used by the model
     vocab = deserialize_vocab(os.path.join(opt.vocab_path, '%s_vocab.json' % opt.data_name))
     opt.vocab_size = len(vocab)
 
     # construct model
-    model = SCAN(opt)
+    model = SCAN(opt, False)
 
     # load model state
     model.load_state_dict(checkpoint['model'])
@@ -363,3 +366,22 @@ def t2i(images, captions, caplens, sims, npts=None, return_ranks=False):
         return (r1, r5, r10, medr, meanr), (ranks, top1)
     else:
         return (r1, r5, r10, medr, meanr)
+
+if __name__ == '__main__':
+    from vocab import Vocabulary
+    import argparse 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_path')
+    parser.add_argument('--data_path', default='./data/')
+    parser.add_argument('--split', default='test')
+    parser.add_argument('--dont_use_cv', action='store_false')
+    parser.add_argument('--data_name', default=None,)
+    args = parser.parse_args()
+
+    evalrank(
+        model_path=args.model_path, 
+        data_path=args.data_path, 
+        split=args.split,
+        data_name=args.data_name,
+        fold5=args.dont_use_cv,
+    )

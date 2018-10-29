@@ -34,6 +34,8 @@ class PrecompDataset(data.Dataset):
         self.adapt_set = adapt_set
         self.sigma = sigma
 
+        self.insert_noise = (data_split in ['train', 'unlabeled'])
+
         data_split = data_split.replace('val', 'dev')
         # Captions
         self.captions = []
@@ -71,8 +73,8 @@ class PrecompDataset(data.Dataset):
         
         if self.adapt_set:
             image_adapt = add_noise(image, self.sigma)
-            image = add_noise(image, self.sigma)
-            image = (image, image_adapt)
+            image_stu = add_noise(image, self.sigma)
+            image = (image_stu, image_adapt)
 
         return image, target, index, img_id
 
